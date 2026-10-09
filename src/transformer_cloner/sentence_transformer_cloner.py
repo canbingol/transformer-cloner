@@ -249,7 +249,15 @@ class SentenceTransformerCloner:
         
         # Load the transformer model's config to get hidden size
         config = AutoConfig.from_pretrained(module_path, token=self.token)
-        self.original_hidden_size = config.hidden_size
+        if hasattr(config, "hidden_size"):
+            self.original_hidden_size = config.hidden_size
+        elif hasattr(config, "text_config") and hasattr(config.text_config, "hidden_size"):
+            self.original_hidden_size = config.text_config.hidden_size
+        elif hasattr(config, "d_model"):
+            self.original_hidden_size = config.d_model
+        else:
+            raise AttributeError(f"Model config does not have a recognizable hidden_size attribute: {type(config)}")
+
         
         if self.pruning_config and self.pruning_config.hidden_size:
             self.new_hidden_size = self.pruning_config.hidden_size
