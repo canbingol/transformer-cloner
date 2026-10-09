@@ -7,9 +7,7 @@ import tempfile
 from typing import Optional
 
 import torch
-from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoModel
-
 
 from transformer_cloner.embedding_strategy import EmbeddingStrategy
 from transformer_cloner.pruning_config import PruningConfig
@@ -83,11 +81,7 @@ class TransformerCloner:
         self.token_id_map = {}
 
         # Process in batches for much faster encoding
-        for batch_start in tqdm(
-            range(0, total_tokens, batch_size),
-            desc="Building token ID map",
-            disable=not verbose,
-        ):
+        for batch_start in range(0, total_tokens, batch_size):
             batch_end = min(batch_start + batch_size, total_tokens)
             batch_tokens = target_vocab_keys[batch_start:batch_end]
 
@@ -105,6 +99,9 @@ class TransformerCloner:
                 # Skip the first token (usually BOS token)
                 source_ids = batch_encoded["input_ids"][i][1:]
                 self.token_id_map[target_id] = source_ids
+
+        if verbose:
+                print(f"Processed {batch_end}/{total_tokens} tokens")
 
         if verbose:
             print(f"Token ID map built with {len(self.token_id_map)} entries")
