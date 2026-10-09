@@ -7,7 +7,7 @@ import tempfile
 from typing import Optional
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, AutoModel
 
 from transformer_cloner.embedding_strategy import EmbeddingStrategy
 from transformer_cloner.pruning_config import PruningConfig
@@ -50,7 +50,10 @@ class TransformerCloner:
         self.target_tokenizer = AutoTokenizer.from_pretrained(target_tokenizer_id, token=token)
 
         # Load original model
-        self.org_model = AutoModelForCausalLM.from_pretrained(org_model_id, token=token)
+        try:
+            self.org_model = AutoModelForCausalLM.from_pretrained(org_model_id, token=token)
+        except Exception:
+            self.org_model = AutoModel.from_pretrained(org_model_id, token=token)
 
         # Token ID mapping (target_id -> list of source_ids)
         self.token_id_map: dict[int, list[int]] = {}
