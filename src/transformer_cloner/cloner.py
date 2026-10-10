@@ -99,8 +99,7 @@ class TransformerCloner:
                 # Skip the first token (usually BOS token)
                 source_ids = batch_encoded["input_ids"][i][1:]
                 self.token_id_map[target_id] = source_ids
-
-        if verbose:
+            if verbose:
                 print(f"Processed {batch_end}/{total_tokens} tokens")
 
         if verbose:
@@ -155,6 +154,18 @@ class TransformerCloner:
         else:
             raise ValueError(f"Unknown strategy: {strategy}")
 
+    def _get_embed_tokens(self, model):
+        """Get the embedding layer across different model architectures."""
+        if hasattr(model, "get_input_embeddings") and model.get_input_embeddings() is not None:
+            return model.get_input_embeddings()
+        elif hasattr(model, "language_model") and hasattr(model.language_model, "embed_tokens"):
+            return model.language_model.embed_tokens
+        elif hasattr(model, "model") and hasattr(model.model, "embed_tokens"):
+            return model.model.embed_tokens
+        elif hasattr(model, "embed_tokens"):
+            return model.embed_tokens
+        raise AttributeError(f"Could not find embed_tokens in model of type {type(model)}")
+
     def _map_single_embedding(
         self,
         target_model: AutoModelForCausalLM,
@@ -164,9 +175,11 @@ class TransformerCloner:
     ) -> None:
         """Map embeddings for a single token."""
         with torch.no_grad():
-            source_embeddings = self.org_model.model.embed_tokens.weight[source_ids]
+            org_embed = self._get_embed_tokens(self.org_model)
+            target_embed = self._get_embed_tokens(target_model)
+            source_embeddings = org_embed.weight[source_ids]
             combined_embedding = self._combine_embeddings(source_embeddings, strategy)
-            target_model.model.embed_tokens.weight[target_id] = combined_embedding
+            target_embed.weight[target_id] = combined_embedding
 
     def clone(
         self,
@@ -199,18 +212,41 @@ class TransformerCloner:
         config.bos_token_id = self.target_tokenizer.bos_token_id
         config.pad_token_id = self.target_tokenizer.pad_token_id
 
-        # Create new model with updated config
-        target_model = AutoModelForCausalLM.from_config(config)
-        target_model.resize_token_embeddings(target_vocab_size)
+        if hasattr(config, "text_config"):
+            config.text_config.vocab_size = target_vocab_size
+            if hasattr(self.target_tokenizer, "eos_token_id") and self.target_tokenizer.eos_token_id is not None:
+                config.text_config.eos_token_id = self.target_tokenizer.eos_token_id
+            if hasattr(self.target_tokenizer, "bos_token_id") and self.target_tokenizer.bos_token_id is not None:
+                config.text_config.bos_token_id = self.target_tokenizer.bos_token_id
+            if hasattr(self.target_tokenizer, "pad_token_id") and self.target_tokenizer.pad_token_id is not None:
+                config.text_config.pad_token_id = self.target_tokenizer.pad_token_id
 
-        assert target_model.config.vocab_size == len(self.target_tokenizer), (
-            f"Model vocab size ({target_model.config.vocab_size}) != "
-            f"tokenizer vocab size ({len(self.target_tokenizer)})"
+        # Create new model with updated config
+        try:
+            target_model = AutoModelForCausalLM.from_config(config)
+        except ValueError:
+            target_model = AutoModel.from_config(config)
+
+        if hasattr(target_model, "resize_token_embeddings"):
+            try:
+                target_model.resize_token_embeddings(target_vocab_size)
+            except Exception:
+                pass
+
+        model_vocab_size = getattr(
+            target_model.config,
+            "vocab_size",
+            getattr(getattr(target_model.config, "text_config", None), "vocab_size", None),
         )
+        if model_vocab_size is not None:
+            assert model_vocab_size == len(self.target_tokenizer), (
+                f"Model vocab size ({model_vocab_size}) != "
+                f"tokenizer vocab size ({len(self.target_tokenizer)})"
+            )
 
         if verbose:
             print(
-                f"Model vocab size: {target_model.config.vocab_size}, "
+                f"Model vocab size: {model_vocab_size}, "
                 f"Tokenizer vocab size: {len(self.target_tokenizer)}"
             )
             print("Copying weights from original model...")
@@ -255,8 +291,9 @@ class TransformerCloner:
                 print(f"Warning: {len(errors)} tokens could not be mapped: {errors[:10]}...")
             print("Model cloning complete!")
 
-        if self.org_model.config.tie_word_embeddings:
-            target_model.tie_weights()
+        if getattr(self.org_model.config, "tie_word_embeddings", False):
+            if hasattr(target_model, "tie_weights"):
+                target_model.tie_weights()
 
         return target_model
 
@@ -812,10 +849,12 @@ class TransformerCloner:
     ) -> None:
         """Map embeddings for a single token with dimension pruning."""
         with torch.no_grad():
-            source_embeddings = self.org_model.model.embed_tokens.weight[source_ids]
+            org_embed = self._get_embed_tokens(self.org_model)
+            target_embed = self._get_embed_tokens(target_model)
+            source_embeddings = org_embed.weight[source_ids]
             source_embeddings = source_embeddings[:, :new_hidden_size]
             combined_embedding = self._combine_embeddings(source_embeddings, strategy)
-            target_model.model.embed_tokens.weight[target_id] = combined_embedding
+            target_embed.weight[target_id] = combined_embedding
 
     def get_token_info(self, token: str) -> dict:
         """
