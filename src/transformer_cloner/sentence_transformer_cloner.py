@@ -611,12 +611,28 @@ class SentenceTransformerCloner:
         config_files = [
             "config_sentence_transformers.json",
             "sentence_bert_config.json",
+            "preprocessor_config.json",
+            "processor_config.json",
+            "chat_template.jinja",
+            "generation_config.json",
+            "special_tokens_map.json",
         ]
         
+        # Search both in root model_path and in any module subdirectories
+        search_dirs = [self.model_path]
+        for m in self.modules_info:
+            mod_dir = os.path.join(self.model_path, m.get("path", ""))
+            if os.path.isdir(mod_dir) and mod_dir not in search_dirs:
+                search_dirs.append(mod_dir)
+        
         for filename in config_files:
-            source = os.path.join(self.model_path, filename)
-            if os.path.exists(source):
-                dest = os.path.join(output_path, filename)
-                shutil.copy2(source, dest)
-                if verbose:
-                    print(f"  Copied {filename}")
+            dest = os.path.join(output_path, filename)
+            if os.path.exists(dest):
+                continue
+            for s_dir in search_dirs:
+                source = os.path.join(s_dir, filename)
+                if os.path.exists(source):
+                    shutil.copy2(source, dest)
+                    if verbose:
+                        print(f"  Copied {filename}")
+                    break
